@@ -220,6 +220,13 @@ Properties	string UUID [read-only]
 			when a notification or indication is received, upon
 			which a PropertiesChanged signal will be emitted.
 
+		dict{object, array{byte}} DirectedValue [Server only, read-only, optional]
+
+			A dictionary with different values for each client.
+			This allows communicating on a per-client basis when
+			using "notify" option together with WriteValue for 
+			per-client writes.
+
 		boolean WriteAcquired [read-only, optional]
 
 			True, if this characteristic has been acquired by any

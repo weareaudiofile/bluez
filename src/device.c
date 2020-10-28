@@ -4028,10 +4028,30 @@ static void gatt_service_removed(struct gatt_db_attribute *attr,
 	gatt_services_changed(device);
 }
 
+bdaddr_t* btd_device_path_to_address(const char* path)
+{
+	const char* sep = g_strrstr( path, "dev_" );
+	char* addr = g_strdup( sep+4 );
+	g_strdelimit( addr, "_", ':');
+	bdaddr_t *btaddr = bt_malloc(sizeof(bdaddr_t));
+	str2ba(addr,btaddr);
+	g_free(addr);
+	return btaddr;
+}
+
+char* btd_device_address_string_to_path(const char* adapter_path,
+				const char* address)
+{
+	char* address_up = g_ascii_strup(address, -1);
+	char* path = g_strdup_printf("%s/dev_%s", adapter_path, address_up);
+	g_strdelimit(path, ":", '_');
+	g_free(address_up);
+	return path;
+}
+
 static struct btd_device *device_new(struct btd_adapter *adapter,
 				const char *address)
 {
-	char *address_up;
 	struct btd_device *device;
 	const char *adapter_path = adapter_get_path(adapter);
 
@@ -4057,10 +4077,7 @@ static struct btd_device *device_new(struct btd_adapter *adapter,
 		return NULL;
 	}
 
-	address_up = g_ascii_strup(address, -1);
-	device->path = g_strdup_printf("%s/dev_%s", adapter_path, address_up);
-	g_strdelimit(device->path, ":", '_');
-	g_free(address_up);
+	device->path = btd_device_address_string_to_path( adapter_path, address );
 
 	str2ba(address, &device->bdaddr);
 

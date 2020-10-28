@@ -1423,6 +1423,54 @@ static void send_notification_to_devices(struct btd_gatt_database *database,
 								&notify);
 }
 
+static void debug_print_device(void *data, void *user_data)
+{
+	struct device_state *device_state = data;
+	char* address = batostr(&(device_state->bdaddr));
+
+	DBG( "device_state %s type %u", address, device_state->bdaddr_type );
+
+	g_free(address);
+}
+
+static void send_notification_directed_device(
+					struct btd_gatt_database *database,
+					const bdaddr_t* address,
+					uint16_t handle, uint8_t* value,
+					uint16_t len, uint16_t ccc_handle,
+					bt_gatt_server_conf_func_t conf,
+					void *user_data)
+{
+	struct device_state *device_state;
+	struct notify notify;
+	
+	/* we don't know the address type because that is not passed
+	 * on the DBus API. So we need to find it in one of the LE types */
+	device_state = find_device_state( database, address, BDADDR_LE_PUBLIC );
+	if (!device_state) {
+		device_state = find_device_state( database, address, BDADDR_LE_RANDOM );
+	}
+	if (!device_state) {
+		char* addr_str = batostr(address);
+		DBG("Device %s not found in LE_PUBLIC or LE_RANDOM", addr_str);
+		g_free(addr_str);
+		queue_foreach( database->device_states, debug_print_device, NULL );
+		return;
+	}
+	
+	memset(&notify, 0, sizeof(notify));
+
+	notify.database = database;
+	notify.handle = handle;
+	notify.ccc_handle = ccc_handle;
+	notify.value = value;
+	notify.len = len;
+	notify.conf = conf;
+	notify.user_data = user_data;
+
+	send_notification_to_device( device_state, &notify );
+}
+
 static void send_service_changed(struct btd_gatt_database *database,
 					struct gatt_db_attribute *attrib)
 {
@@ -2698,32 +2746,82 @@ static void property_changed_cb(GDBusProxy *proxy, const char *name,
 	uint8_t *value = NULL;
 	int len = 0;
 
-	if (strcmp(name, "Value"))
-		return;
+	if (strcmp(name, "Value") == 0) {
+		if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY) {
+			DBG("Malformed \"Value\" property received");
+			return;
+		}
 
-	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY) {
-		DBG("Malformed \"Value\" property received");
-		return;
-	}
+		dbus_message_iter_recurse(iter, &array);
+		dbus_message_iter_get_fixed_array(&array, &value, &len);
 
-	dbus_message_iter_recurse(iter, &array);
-	dbus_message_iter_get_fixed_array(&array, &value, &len);
+		if (len < 0) {
+			DBG("Malformed \"Value\" property received");
+			return;
+		}
 
-	if (len < 0) {
-		DBG("Malformed \"Value\" property received");
-		return;
-	}
+		/* Truncate the value if it's too large */
+		len = MIN(BT_ATT_MAX_VALUE_LEN, len);
+		value = len ? value : NULL;
 
-	/* Truncate the value if it's too large */
-	len = MIN(BT_ATT_MAX_VALUE_LEN, len);
-	value = len ? value : NULL;
+		send_notification_to_devices(chrc->service->app->database,
+					gatt_db_attribute_get_handle(chrc->attrib),
+					value, len,
+					gatt_db_attribute_get_handle(chrc->ccc),
+					chrc->props & BT_GATT_CHRC_PROP_INDICATE ?
+					conf_cb : NULL, proxy);
+	
+	} else if (strcmp(name, "DirectedValue") == 0) {
+		DBusMessageIter array;
 
-	send_notification_to_devices(chrc->service->app->database,
+		if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY) {
+			error("Malformed \"DirectedValue\" property received");
+			return;
+		}
+
+		dbus_message_iter_recurse(iter, &array);
+
+		if (dbus_message_iter_get_arg_type(&array) != DBUS_TYPE_DICT_ENTRY) {
+			warn("\"DirectedValue\" property changed but no dict entry");
+		}
+
+		/* cycle through all directed value entries */
+		while (dbus_message_iter_get_arg_type(&array) == DBUS_TYPE_DICT_ENTRY) {
+			const char *path;
+			DBusMessageIter data, entry;
+
+			dbus_message_iter_recurse(&array, &entry);
+			dbus_message_iter_get_basic(&entry, &path);
+
+			bdaddr_t* addr = btd_device_path_to_address( path );
+			if( !addr || (strlen(path) == 0) ) {
+				error("Invalid Path in \"DirectedValue\" response");
+				return;
+			}
+
+			dbus_message_iter_next(&entry);
+			dbus_message_iter_recurse(&entry, &data);
+			dbus_message_iter_get_fixed_array(&data, &value, &len);
+
+			if (len < 0) {
+				error("Missing Value in \"DirectedValue\" response");
+				return;
+			}
+
+			send_notification_directed_device(
+				chrc->service->app->database,
+				addr,
 				gatt_db_attribute_get_handle(chrc->attrib),
 				value, len,
 				gatt_db_attribute_get_handle(chrc->ccc),
 				chrc->props & BT_GATT_CHRC_PROP_INDICATE ?
 				conf_cb : NULL, proxy);
+			
+			g_free(addr);
+
+			dbus_message_iter_next(&array);
+		}
+	}
 }
 
 static bool database_add_ccc(struct external_service *service,

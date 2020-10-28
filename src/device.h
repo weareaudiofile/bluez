@@ -26,6 +26,10 @@
 
 struct btd_device;
 
+bdaddr_t* btd_device_path_to_address(const char* path);
+char* btd_device_address_string_to_path(const char* adapter_path,
+				const char* address);
+
 struct btd_device *device_create(struct btd_adapter *adapter,
 				const bdaddr_t *address, uint8_t bdaddr_type);
 struct btd_device *device_create_from_storage(struct btd_adapter *adapter,
