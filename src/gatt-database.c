@@ -2788,7 +2788,7 @@ static void property_changed_cb(GDBusProxy *proxy, const char *name,
 		/* cycle through all directed value entries */
 		while (dbus_message_iter_get_arg_type(&array) == DBUS_TYPE_DICT_ENTRY) {
 			const char *path;
-			DBusMessageIter data, entry;
+			DBusMessageIter entry, data_array, data;
 
 			dbus_message_iter_recurse(&array, &entry);
 			dbus_message_iter_get_basic(&entry, &path);
@@ -2800,25 +2800,40 @@ static void property_changed_cb(GDBusProxy *proxy, const char *name,
 			}
 
 			dbus_message_iter_next(&entry);
-			dbus_message_iter_recurse(&entry, &data);
-			dbus_message_iter_get_fixed_array(&data, &value, &len);
 
-			if (len < 0) {
-				error("Missing Value in \"DirectedValue\" response");
+			if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_ARRAY) {
+				error("Missing 'aay' in \"DirectedValue\" response");
 				return;
 			}
 
-			send_notification_directed_device(
-				chrc->service->app->database,
-				addr,
-				gatt_db_attribute_get_handle(chrc->attrib),
-				value, len,
-				gatt_db_attribute_get_handle(chrc->ccc),
-				chrc->props & BT_GATT_CHRC_PROP_INDICATE ?
-				conf_cb : NULL, proxy);
-			
+			dbus_message_iter_recurse(&entry, &data_array);
+
+			/* loop through all data arrays for this client and send them out */
+			while(dbus_message_iter_get_arg_type(&data_array) == DBUS_TYPE_ARRAY)
+			{
+				dbus_message_iter_recurse(&data_array, &data);
+				dbus_message_iter_get_fixed_array(&data, &value, &len);
+
+				if (len < 0) {
+					error("Missing Value in \"DirectedValue\" response");
+					return;
+				}
+
+				send_notification_directed_device(
+					chrc->service->app->database,
+					addr,
+					gatt_db_attribute_get_handle(chrc->attrib),
+					value, len,
+					gatt_db_attribute_get_handle(chrc->ccc),
+					chrc->props & BT_GATT_CHRC_PROP_INDICATE ?
+					conf_cb : NULL, proxy);
+
+				dbus_message_iter_next(&data_array);
+			}
+
 			g_free(addr);
 
+			/* next dict entry */
 			dbus_message_iter_next(&array);
 		}
 	}
