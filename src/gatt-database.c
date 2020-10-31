@@ -2593,6 +2593,26 @@ static struct pending_op *acquire_write(struct external_chrc *chrc,
 	return NULL;
 }
 
+static void acquire_notify_setup(DBusMessageIter *iter, void *user_data)
+{
+	DBusMessageIter dict;
+	struct pending_op *op = user_data;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+					DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+					DBUS_TYPE_STRING_AS_STRING
+					DBUS_TYPE_VARIANT_AS_STRING
+					DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
+					&dict);
+
+	if(op)
+		append_options(&dict, op);
+	else
+		error("op is NULL, cannot populate options");
+
+	dbus_message_iter_close_container(iter, &dict);
+}
+
 static void acquire_notify_reply(DBusMessage *message, void *user_data)
 {
 	struct pending_op *op = user_data;
@@ -2638,27 +2658,13 @@ static void acquire_notify_reply(DBusMessage *message, void *user_data)
 	return;
 
 retry:
-	g_dbus_proxy_method_call(chrc->proxy, "StartNotify", NULL, NULL,
-							NULL, NULL);
+	g_dbus_proxy_method_call(chrc->proxy, "StartNotify", 
+						/* we want the same options as acquire */
+						acquire_notify_setup, 
+						NULL,
+						op, pending_op_free);
 
 	__sync_fetch_and_add(&chrc->ntfy_cnt, 1);
-}
-
-static void acquire_notify_setup(DBusMessageIter *iter, void *user_data)
-{
-	DBusMessageIter dict;
-	struct pending_op *op = user_data;
-
-	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
-					DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
-					DBUS_TYPE_STRING_AS_STRING
-					DBUS_TYPE_VARIANT_AS_STRING
-					DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
-					&dict);
-
-	append_options(&dict, op);
-
-	dbus_message_iter_close_container(iter, &dict);
 }
 
 static uint8_t ccc_write_cb(struct pending_op *op, void *user_data)
@@ -2673,6 +2679,16 @@ static uint8_t ccc_write_cb(struct pending_op *op, void *user_data)
 
 	/* Notifications/indications disabled */
 	if (!value) {
+		/*
+		 * Send request to stop notifying. This is best-effort
+		 * operation, so simply ignore the return the value.
+		 */
+		g_dbus_proxy_method_call(chrc->proxy, "StopNotify", 
+							/* we want the same options as acquire */
+							acquire_notify_setup,
+							NULL,
+							op, pending_op_free);
+
 		if (!chrc->ntfy_cnt)
 			goto done;
 
@@ -2685,12 +2701,6 @@ static uint8_t ccc_write_cb(struct pending_op *op, void *user_data)
 			goto done;
 		}
 
-		/*
-		 * Send request to stop notifying. This is best-effort
-		 * operation, so simply ignore the return the value.
-		 */
-		g_dbus_proxy_method_call(chrc->proxy, "StopNotify", NULL,
-							NULL, NULL, NULL);
 		goto done;
 	}
 
@@ -2725,8 +2735,11 @@ static uint8_t ccc_write_cb(struct pending_op *op, void *user_data)
 	 * Always call StartNotify for an incoming enable and ignore the return
 	 * value for now.
 	 */
-	if (g_dbus_proxy_method_call(chrc->proxy, "StartNotify", NULL, NULL,
-						NULL, NULL) == FALSE)
+	if (g_dbus_proxy_method_call(chrc->proxy, "StartNotify",
+						/* we want the same options as acquire */
+						acquire_notify_setup,
+						NULL,
+						op, pending_op_free) == FALSE)
 		return BT_ATT_ERROR_UNLIKELY;
 
 	__sync_fetch_and_add(&chrc->ntfy_cnt, 1);
