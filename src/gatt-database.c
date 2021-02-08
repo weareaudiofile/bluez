@@ -2228,6 +2228,7 @@ static void append_options(DBusMessageIter *iter, void *user_data)
 {
 	struct pending_op *op = user_data;
 	const char *path = device_get_path(op->device);
+	const bdaddr_t* address = device_get_address(op->device);
 	struct bt_gatt_server *server;
 	const char *link;
 	uint16_t mtu;
@@ -2243,7 +2244,12 @@ static void append_options(DBusMessageIter *iter, void *user_data)
 		link = NULL;
 		break;
 	}
-
+	
+	char addr_str[18];
+	const char *str = addr_str;
+	ba2str(address, addr_str);
+	dict_append_entry(iter, "address", DBUS_TYPE_STRING, &str);
+	
 	dict_append_entry(iter, "device", DBUS_TYPE_OBJECT_PATH, &path);
 	if (op->offset)
 		dict_append_entry(iter, "offset", DBUS_TYPE_UINT16,
